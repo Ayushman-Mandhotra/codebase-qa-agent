@@ -1,12 +1,18 @@
 import subprocess
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
+# Absolute path, so this resolves the same way regardless of the process's
+# current working directory at launch (a relative "_repos" broke when the
+# app was started from a different CWD than the repo root).
+REPOS_DIR = os.environ.get("REPOS_DIR") or str(Path(__file__).resolve().parent.parent / "_repos")
+
 def clone_repo(url: str) -> str:
-    dest = os.path.join("_repos", url.rstrip("/").split("/")[-1])
+    dest = os.path.join(REPOS_DIR, url.rstrip("/").split("/")[-1])
     if os.path.isdir(os.path.join(dest, ".git")):
         return dest  # already cloned, don't do it again
-    os.makedirs("_repos", exist_ok=True)
+    os.makedirs(REPOS_DIR, exist_ok=True)
     subprocess.run(["git", "clone", "--depth", "1", url, dest], check=True)
     return dest
 

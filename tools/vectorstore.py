@@ -1,5 +1,7 @@
 import os
+import re
 import time
+from pathlib import Path
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
 from langchain_chroma import Chroma
@@ -9,6 +11,31 @@ from dotenv import load_dotenv
 load_dotenv()
 
 embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+
+# Absolute path, so the prebuild script and the running app agree on the
+# same on-disk location regardless of the process's launch CWD.
+CHROMA_DIR = os.environ.get("CHROMA_DIR") or str(Path(__file__).resolve().parent.parent / "chroma_db")
+
+
+def _collection_name(repo_path: str) -> str:
+    """
+    Derives a stable Chroma collection name from a repo's local directory
+    name, so each repo gets its own collection instead of every repo
+    sharing one hardcoded collection (which used to mix unrelated repos'
+    chunks together and made is_indexed() report true for the wrong repo).
+    """
+    name = os.path.basename(os.path.normpath(repo_path))
+    name = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
+    name = f"repo_{name}".strip("_-")
+    return name[:63]
+
+
+def _store_for(repo_path: str) -> Chroma:
+    return Chroma(
+        collection_name=_collection_name(repo_path),
+        embedding_function=embeddings,
+        persist_directory=CHROMA_DIR,
+    )
 
 def get_splitter_for(file_extension: str) -> RecursiveCharacterTextSplitter:
 
@@ -39,7 +66,7 @@ def index_repo(repo_path: str, batch_size: int = 10, delay_seconds: float = 10) 
     allows 100 embedding requests per minute, and indexing a whole repo
     in one burst can exceed that and get rate-limited partway through.
     """
-    store = Chroma(collection_name="repo_code", embedding_function=embeddings, persist_directory="chroma_db")
+    store = _store_for(repo_path)
     docs = []
     for rel_path in list_repo_files(repo_path):
         content = read_file(repo_path, rel_path)
@@ -62,23 +89,31 @@ def index_repo(repo_path: str, batch_size: int = 10, delay_seconds: float = 10) 
 
     return store
 
-def retrieve(query: str, k: int = 5) -> list[Document]:
+def retrieve(query: str, repo_path: str, k: int = 5) -> list[Document]:
     """
-    Given a question, finds the k most relevant chunks already indexed.
+    Given a question and the local path of the repo it's about, finds the
+    k most relevant chunks already indexed for that specific repo.
     """
-    store = Chroma(collection_name="repo_code", embedding_function=embeddings, persist_directory="chroma_db")
+    store = _store_for(repo_path)
     return store.similarity_search(query, k=k)
 
 def is_indexed(repo_path: str) -> bool:
-    """Cheap check: has this repo already been indexed?"""
-    store = Chroma(collection_name="repo_code", embedding_function=embeddings, persist_directory="chroma_db")
-    return len(store.similarity_search("x", k=1)) > 0
+    """
+    Cheap check: has this specific repo already been indexed?
+
+    Uses the collection's raw document count instead of a similarity search,
+    so checking status never costs an embedding API call (embedding quota is
+    scarce enough — free tier is 1000/day, shared with actual indexing and
+    every retrieve() call — that spending it just to check status is wasteful).
+    """
+    store = _store_for(repo_path)
+    return store._collection.count() > 0
 
 if __name__ == "__main__":
     index_repo("_repos/requests")
     print("Indexing done.")
 
-    results = retrieve("how does the library handle request timeouts?")
+    results = retrieve("how does the library handle request timeouts?", "_repos/requests")
     for r in results:
         print(f"\n[{r.metadata['file_path']} | chunk {r.metadata['chunk_index']}]")
         print(r.page_content[:200])

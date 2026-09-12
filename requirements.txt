@@ -1,0 +1,9 @@
+gradio==6.27.0
+langchain-core==1.6.3
+langgraph==1.2.11
+langchain-google-genai==4.4.0
+langchain-chroma==1.1.0
+langchain-text-splitters==1.1.2
+chromadb==1.5.9
+google-genai==2.23.0
+python-dotenv==1.2.3

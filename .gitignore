@@ -2,5 +2,9 @@ venv/
 .env
 __pycache__/
 _repos/
-chroma_db/
 .DS_Store
+
+# chroma_db/ is intentionally NOT ignored: the deployed app (app.py) loads a
+# prebuilt index committed to the repo (see scripts/prebuild_index.py) rather
+# than indexing anything at runtime, since Spaces' free-tier filesystem is
+# ephemeral and indexing takes minutes of rate-limited embedding calls.

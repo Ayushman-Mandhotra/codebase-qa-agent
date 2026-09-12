@@ -1,9 +1,32 @@
+---
+title: Codebase QA Agent
+emoji: 🧭
+colorFrom: blue
+colorTo: purple
+sdk: gradio
+sdk_version: 6.27.0
+app_file: app.py
+pinned: false
+---
+
 # Codebase Q&A Agent
 
 An AI agent that clones a GitHub repository, indexes its code, and answers
 questions about how the codebase works — citing the specific file each
 answer is grounded in. Built to demonstrate getting productive in an
 unfamiliar codebase fast, without a human walking you through it first.
+
+## Live demo
+
+The Hugging Face Space (`app.py`) is a Gradio chat UI wrapping this same
+agent. `requests`, `click`, and `tqdm` are pre-indexed and answer instantly
+(the index is prebuilt via `scripts/prebuild_index.py` and committed to the
+repo, since indexing takes minutes and Spaces' free-tier filesystem doesn't
+persist across restarts). You can also paste any other public GitHub URL and
+the agent will clone and index it live — that's capped at a few new repos
+per day to protect a shared embeddings quota across all visitors. The chat UI
+shows every tool call the agent makes, so the agentic behavior (not just the
+final answer) is visible.
 
 ## What "agent" means here
 
