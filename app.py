@@ -13,9 +13,22 @@ import os
 import uuid
 
 import gradio as gr
+import spaces
 
 import agents
 from tools.repo_tool import REPOS_DIR
+
+# Hugging Face's free tier only offers ZeroGPU hardware for Gradio Spaces
+# (no free plain-CPU tier without a PRO subscription), and ZeroGPU refuses to
+# start an app with no @spaces.GPU function. This app does no local GPU work
+# at all (just Gemini API calls + local Chroma search) — this no-op function,
+# called once at startup, exists purely to satisfy that requirement.
+@spaces.GPU
+def _warm_zerogpu():
+    return True
+
+
+_warm_zerogpu()
 
 MAX_QUESTION_LENGTH = 500
 MAX_REQUESTS_PER_SESSION = 20
