@@ -16,7 +16,7 @@ import gradio as gr
 import spaces
 
 import agents
-from tools.repo_tool import REPOS_DIR
+from tools.repo_tool import REPOS_DIR, clone_repo
 
 # Hugging Face's free tier only offers ZeroGPU hardware for Gradio Spaces
 # (no free plain-CPU tier without a PRO subscription), and ZeroGPU refuses to
@@ -33,6 +33,21 @@ _warm_zerogpu()
 MAX_QUESTION_LENGTH = 500
 MAX_REQUESTS_PER_SESSION = 20
 MAX_NEW_REPOS_PER_DAY = 5
+
+PRE_INDEXED_REPO_URLS = [
+    "https://github.com/psf/requests",
+    "https://github.com/pallets/click",
+    "https://github.com/tqdm/tqdm",
+]
+
+# chroma_db/ (the actual indexed vectors) is committed to the repo, but
+# _repos/ (the raw cloned source) is gitignored — on a fresh Space container
+# only chroma_db/ exists. retrieve_code_tool only needs the vector store, but
+# read_file_tool/list_files_tool read the actual files on disk, so re-clone
+# the pre-indexed repos here (cheap git-only operation, no embedding calls,
+# and clone_repo() is a no-op if a repo is already present).
+for _url in PRE_INDEXED_REPO_URLS:
+    clone_repo(_url)
 
 AVAILABLE_REPOS = {
     "requests": os.path.join(REPOS_DIR, "requests"),
@@ -139,32 +154,42 @@ def chat(message, history, thread_id, request_count):
 
     yield _render(steps, None), request_count
 
-    for update in _agent.stream(
-        {"messages": [("user", message)]}, config=config, stream_mode="updates"
-    ):
-        for node_name, node_data in update.items():
-            for m in node_data.get("messages", []):
-                if node_name == "agent":
-                    tool_calls = getattr(m, "tool_calls", None) or []
-                    if tool_calls:
-                        for tc in tool_calls:
-                            icon = TOOL_ICONS.get(tc["name"], "🔧")
-                            arg_str = _format_args(tc.get("args", {}))
-                            steps.append(f"{icon} calling `{tc['name']}`({arg_str})")
-                            if tc["name"] == "index_repo_tool":
-                                steps.append(
-                                    "⏳ indexing a new repo takes several minutes "
-                                    "(rate-limited embedding calls) — hang tight..."
-                                )
+    try:
+        for update in _agent.stream(
+            {"messages": [("user", message)]}, config=config, stream_mode="updates"
+        ):
+            for node_name, node_data in update.items():
+                for m in node_data.get("messages", []):
+                    if node_name == "agent":
+                        tool_calls = getattr(m, "tool_calls", None) or []
+                        if tool_calls:
+                            for tc in tool_calls:
+                                icon = TOOL_ICONS.get(tc["name"], "🔧")
+                                arg_str = _format_args(tc.get("args", {}))
+                                steps.append(f"{icon} calling `{tc['name']}`({arg_str})")
+                                if tc["name"] == "index_repo_tool":
+                                    steps.append(
+                                        "⏳ indexing a new repo takes several minutes "
+                                        "(rate-limited embedding calls) — hang tight..."
+                                    )
+                            yield _render(steps, None), request_count
+                        else:
+                            final_text = _extract_text(getattr(m, "content", ""))
+                            yield _render(steps, final_text), request_count
+                    elif node_name == "tools":
+                        name = getattr(m, "name", "tool")
+                        icon = TOOL_ICONS.get(name, "🔧")
+                        steps.append(f"{icon} `{name}` → done")
                         yield _render(steps, None), request_count
-                    else:
-                        final_text = _extract_text(getattr(m, "content", ""))
-                        yield _render(steps, final_text), request_count
-                elif node_name == "tools":
-                    name = getattr(m, "name", "tool")
-                    icon = TOOL_ICONS.get(name, "🔧")
-                    steps.append(f"{icon} `{name}` → done")
-                    yield _render(steps, None), request_count
+    except Exception:
+        import traceback
+        traceback.print_exc()  # full traceback goes to the Space's container logs
+        yield (
+            _render(steps, None).replace("_thinking..._", "")
+            + "\n\nSomething went wrong answering that — this has been logged. "
+            "Please try again or ask something else.",
+            request_count,
+        )
 
 
 with gr.Blocks(title="Codebase Q&A Agent") as demo:
